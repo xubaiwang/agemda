@@ -1,141 +1,162 @@
-use std::path::{absolute, Path, PathBuf};
+use std::{
+    collections::HashMap,
+    env,
+    path::{Path, PathBuf},
+};
 
-use chrono::{Local, NaiveDate};
-use clap::{Parser, Subcommand};
-use ignore::{types::TypesBuilder, DirEntry, WalkBuilder};
+use agemda::{load::load_todos_from_root, models::todo::Todo};
+use chrono::{Days, Local, NaiveDate};
+use clap::Parser;
+use colored::Colorize;
+use pathdiff::diff_paths;
+use url::Url;
 
-use agemda::Task;
-
-fn main() {
-    let options = Options::parse();
-
-    // create walk
-    let walk = WalkBuilder::new(&options.path)
-        .types(
-            TypesBuilder::new()
-                .add_defaults()
-                .select("md")
-                .build()
-                .unwrap(),
-        )
-        .add_custom_ignore_filename(".agmdignore")
-        .build();
-
-    // iter
-    for entry in walk {
-        match entry {
-            Ok(entry) => handle_entry(&entry, &options),
-            Err(err) => println!("ERROR: {}", err),
-        }
-    }
+fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+    let todos = load_todos_from_root(&cli.root)?;
+    show_todos(&todos, &cli);
+    Ok(())
 }
 
-fn handle_entry(entry: &DirEntry, options: &Options) {
-    let path = entry.path();
-    // skip dir
-    if path.is_dir() {
-        return;
-    }
-    let tasks = Task::load_from_path(path);
-    for task in tasks {
-        handle_task(&task, options);
-    }
-}
+fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
+    let show_done = opts.done;
+    let show_all = opts.all;
 
-fn handle_task(task: &Task, options: &Options) {
-    match options.command {
-        Command::Mal => {
-            match &task.agmd {
+    let today = opts.today;
+    let tomorrow = today.checked_add_days(Days::new(1)).unwrap();
+    let three_days = today.checked_add_days(Days::new(2)).unwrap();
+    let week = today.checked_add_days(Days::new(7)).unwrap();
+
+    let mut mal: Vec<(&Path, usize, &Todo)> = vec![];
+    let mut overdue: Vec<(&Path, usize, &Todo)> = vec![];
+    let mut due_today: Vec<(&Path, usize, &Todo)> = vec![];
+    let mut due_tomorrow: Vec<(&Path, usize, &Todo)> = vec![];
+    let mut due_overmorrow: Vec<(&Path, usize, &Todo)> = vec![];
+    let mut due_week: Vec<(&Path, usize, &Todo)> = vec![];
+    let mut due_all: Vec<(&Path, usize, &Todo)> = vec![];
+
+    // collect into groups
+    for (path, todos) in todo_map {
+        for (line, todo) in todos {
+            // malform
+            match &todo.agmd {
+                // parse error => mal
+                None => mal.push((path, *line, &todo)),
+
                 Some(agmd) => {
-                    if agmd.start.is_some() || agmd.completed.is_some() {
-                        return;
+                    if !show_done && agmd.completed.is_some() {
+                        continue;
+                    }
+                    if let (Some(start), Some(due)) = (agmd.start, agmd.due) {
+                        // start > due => mal
+                        if start > due {
+                            mal.push((path, *line, &todo));
+                        }
+                        if start > today {
+                            continue;
+                        }
+                        if due < today {
+                            overdue.push((path, *line, &todo));
+                            continue;
+                        }
+                        if due == today {
+                            due_today.push((path, *line, &todo));
+                            continue;
+                        }
+                        if due <= tomorrow {
+                            due_tomorrow.push((path, *line, &todo));
+                            continue;
+                        }
+                        if due <= three_days {
+                            due_overmorrow.push((path, *line, &todo));
+                            continue;
+                        }
+                        if due <= week {
+                            due_week.push((path, *line, &todo));
+                            continue;
+                        }
+                        if show_all {
+                            due_all.push((path, *line, &todo));
+                        }
                     }
                 }
-                None => {}
             }
-            println!(
-                "MALF {}#{}: {} <agmd:{}>",
-                task.source
-                    .path
-                    .strip_prefix(&options.path)
-                    .unwrap()
-                    .display(),
-                task.source.line + 1,
-                task.text,
-                task.raw
-            );
         }
-        Command::Today { date, done } => {
-            if task.done != done {
-                return;
-            }
-            if !task.source.path.starts_with(&options.path) {
-                return;
-            }
-            if let Some(agmd) = &task.agmd {
-                match (agmd.start, agmd.due) {
-                    (None, None) => return,
-                    (None, Some(due)) => {
-                        if due < date {
-                            return;
-                        }
-                    }
-                    (Some(start), None) => {
-                        if start > date {
-                            return;
-                        }
-                    }
-                    (Some(start), Some(due)) => {
-                        if start > date {
-                            return;
-                        }
-                        if due < date {
-                            return;
-                        }
-                    }
-                }
-                println!(
-                    "{} {}#{}: {} <agmd:{}>",
-                    if task.done { "DONE" } else { "TODO" },
-                    task.source
-                        .path
-                        .strip_prefix(&options.path)
-                        .unwrap()
-                        .display(),
-                    task.source.line + 1,
-                    task.text,
-                    task.raw
+    }
+
+    // print each group
+    let print_todo = |(path, line, todo): (&Path, usize, &Todo)| {
+        let linked_path = match Url::from_file_path(path) {
+            Ok(url) => {
+                format!(
+                    "{}{}{}",
+                    osc8::Hyperlink::new(url.as_str()),
+                    diff_paths(path, &opts.root).unwrap().display(),
+                    osc8::Hyperlink::END
                 )
             }
-        }
+            Err(_) => format!("{}", path.display()),
+        };
+        let line = line + 1;
+        let meta = format!("@ {linked_path}#L{line}").dimmed();
+
+        let summary = &todo.summary;
+        let raw = &todo.raw;
+        let done_sign = match &todo.agmd {
+            Some(agmd) => {
+                if agmd.completed.is_some() {
+                    "x"
+                } else {
+                    " "
+                }
+            }
+            None => "?",
+        };
+        println!("- [{done_sign}] {summary} <agmd:{raw}>  {meta}");
+    };
+
+    if !mal.is_empty() {
+        println!("{}", "Malform:".bold());
+        mal.into_iter().for_each(print_todo);
+    }
+    if !overdue.is_empty() {
+        println!("{}", "Overdue:".bold());
+        overdue.into_iter().for_each(print_todo);
+    }
+    println!("{}", "Today:".bold());
+    due_today.into_iter().for_each(print_todo);
+    println!("{}", "Tomorrow:".bold());
+    due_tomorrow.into_iter().for_each(print_todo);
+    println!("{}", "Overmorrow:".bold());
+    due_overmorrow.into_iter().for_each(print_todo);
+    println!("{}", "This Week:".bold());
+    due_week.into_iter().for_each(print_todo);
+    if show_all {
+        println!("{}", "All:".bold());
+        due_all.into_iter().for_each(print_todo);
     }
 }
 
+/// CLI definition.
 #[derive(Debug, Clone, Parser)]
-struct Options {
-    /// The path must be absolute to be used strip_prefix.
-    #[arg(default_value = ".", value_parser = parse_path_absolute)]
-    path: PathBuf,
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Debug, Clone, Subcommand)]
-enum Command {
-    /// Find malform items
-    Mal,
-    Today {
-        #[arg(long, default_value_t = current_date())]
-        date: NaiveDate,
-        #[arg(long, default_value_t = false)]
-        done: bool,
-    },
-}
-
-fn current_date() -> NaiveDate {
-    Local::now().date_naive()
-}
-
-fn parse_path_absolute(s: &str) -> Result<PathBuf, std::io::Error> {
-    absolute(Path::new(s))
+struct Cli {
+    /// The root dir to search for markdown files
+    #[arg(
+        default_value_os_t =
+            env::current_dir().expect("Fail to get current dir")
+    )]
+    root: PathBuf,
+    /// The date of today.
+    #[arg(
+        long,
+        short,
+        default_value_t = Local::now().date_naive()
+    )]
+    today: NaiveDate,
+    /// Whether to show done task.
+    #[arg(long, short, default_value_t = false)]
+    done: bool,
+    /// Whether to show all task that is started.
+    #[arg(long, short, default_value_t = false)]
+    all: bool,
 }

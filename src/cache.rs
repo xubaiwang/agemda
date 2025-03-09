@@ -11,7 +11,7 @@ use chrono::{Datelike, NaiveDate};
 use fjall::{Config, TransactionalKeyspace, TransactionalPartition};
 use uuid::Uuid;
 
-use crate::Task;
+use crate::Todo;
 
 pub static CACHE_DIR: LazyLock<PathBuf> =
     LazyLock::new(|| dirs::cache_dir().unwrap().join("agemda").join("fjall"));
@@ -91,7 +91,7 @@ impl Cache {
         todo!()
     }
 
-    fn insert_task(&self, task: &Task) {
+    fn insert_task(&self, task: &Todo) {
         let mut tx = self.keyspace.write_tx();
 
         // table
