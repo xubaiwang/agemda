@@ -21,6 +21,7 @@ fn main() -> anyhow::Result<()> {
 fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
     let show_done = opts.done;
     let show_all = opts.all;
+    let strict_start = opts.strict;
 
     let today = opts.today;
     let tomorrow = today.checked_add_days(Days::new(1)).unwrap();
@@ -55,7 +56,7 @@ fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
                                     mal.push((path, *line, &todo));
                                     continue;
                                 }
-                                if start > today {
+                                if strict_start && start > today {
                                     continue;
                                 }
                             }
@@ -85,7 +86,7 @@ fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
                         }
                         None => {
                             if let Some(start) = agmd.start {
-                                if start > today {
+                                if strict_start && start > today {
                                     continue;
                                 }
                             }
@@ -175,4 +176,7 @@ struct Cli {
     /// Whether to show all task that is started.
     #[arg(long, short, default_value_t = false)]
     all: bool,
+    /// Whether start is strict.
+    #[arg(long, short, default_value_t = false)]
+    strict: bool,
 }
