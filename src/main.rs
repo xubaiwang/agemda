@@ -47,36 +47,49 @@ fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
                     if !show_done && agmd.completed.is_some() {
                         continue;
                     }
-                    if let (Some(start), Some(due)) = (agmd.start, agmd.due) {
-                        // start > due => mal
-                        if start > due {
-                            mal.push((path, *line, &todo));
+                    match agmd.due {
+                        Some(due) => {
+                            if let Some(start) = agmd.start {
+                                // start > due => mal
+                                if start > due {
+                                    mal.push((path, *line, &todo));
+                                    continue;
+                                }
+                                if start > today {
+                                    continue;
+                                }
+                            }
+                            if due < today {
+                                overdue.push((path, *line, &todo));
+                                continue;
+                            }
+                            if due == today {
+                                due_today.push((path, *line, &todo));
+                                continue;
+                            }
+                            if due <= tomorrow {
+                                due_tomorrow.push((path, *line, &todo));
+                                continue;
+                            }
+                            if due <= three_days {
+                                due_overmorrow.push((path, *line, &todo));
+                                continue;
+                            }
+                            if due <= week {
+                                due_week.push((path, *line, &todo));
+                                continue;
+                            }
+                            if show_all {
+                                due_all.push((path, *line, &todo));
+                            }
                         }
-                        if start > today {
-                            continue;
-                        }
-                        if due < today {
-                            overdue.push((path, *line, &todo));
-                            continue;
-                        }
-                        if due == today {
+                        None => {
+                            if let Some(start) = agmd.start {
+                                if start > today {
+                                    continue;
+                                }
+                            }
                             due_today.push((path, *line, &todo));
-                            continue;
-                        }
-                        if due <= tomorrow {
-                            due_tomorrow.push((path, *line, &todo));
-                            continue;
-                        }
-                        if due <= three_days {
-                            due_overmorrow.push((path, *line, &todo));
-                            continue;
-                        }
-                        if due <= week {
-                            due_week.push((path, *line, &todo));
-                            continue;
-                        }
-                        if show_all {
-                            due_all.push((path, *line, &todo));
                         }
                     }
                 }
@@ -100,19 +113,22 @@ fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
         let line = line + 1;
         let meta = format!("@ {linked_path}#L{line}").dimmed();
 
-        let summary = &todo.summary;
+        let summary = &todo.summary.bold();
+
         let raw = &todo.raw;
+        let agmd_bracketed = format!("<agmd:{raw}>").bright_blue();
+
         let done_sign = match &todo.agmd {
             Some(agmd) => {
                 if agmd.completed.is_some() {
-                    "x"
+                    "x".green()
                 } else {
-                    " "
+                    " ".yellow()
                 }
             }
-            None => "?",
+            None => "?".red(),
         };
-        println!("- [{done_sign}] {summary} <agmd:{raw}>  {meta}");
+        println!("- [{done_sign}] {summary} {agmd_bracketed}  {meta}");
     };
 
     if !mal.is_empty() {
