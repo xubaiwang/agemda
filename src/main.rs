@@ -21,6 +21,7 @@ fn main() -> anyhow::Result<()> {
 fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
     let show_done = opts.done;
     let show_all = opts.all;
+    let show_week = opts.week;
     let strict_start = opts.strict;
 
     let today = opts.today;
@@ -76,7 +77,7 @@ fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
                                 due_overmorrow.push((path, *line, &todo));
                                 continue;
                             }
-                            if due <= week {
+                            if show_week && due <= week {
                                 due_week.push((path, *line, &todo));
                                 continue;
                             }
@@ -146,8 +147,10 @@ fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
     due_tomorrow.into_iter().for_each(print_todo);
     println!("{}", "Overmorrow:".bold());
     due_overmorrow.into_iter().for_each(print_todo);
-    println!("{}", "This Week:".bold());
-    due_week.into_iter().for_each(print_todo);
+    if show_week {
+        println!("{}", "This Week:".bold());
+        due_week.into_iter().for_each(print_todo);
+    }
     if show_all {
         println!("{}", "All:".bold());
         due_all.into_iter().for_each(print_todo);
@@ -179,4 +182,7 @@ struct Cli {
     /// Whether start is strict.
     #[arg(long, short, default_value_t = false)]
     strict: bool,
+    /// Whether to show week.
+    #[arg(long, short, default_value_t = false)]
+    week: bool,
 }
