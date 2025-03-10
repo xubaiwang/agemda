@@ -31,6 +31,7 @@ fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
 
     let mut mal: Vec<(&Path, usize, &Todo)> = vec![];
     let mut overdue: Vec<(&Path, usize, &Todo)> = vec![];
+    let mut undue: Vec<(&Path, usize, &Todo)> = vec![];
     let mut due_today: Vec<(&Path, usize, &Todo)> = vec![];
     let mut due_tomorrow: Vec<(&Path, usize, &Todo)> = vec![];
     let mut due_overmorrow: Vec<(&Path, usize, &Todo)> = vec![];
@@ -91,7 +92,7 @@ fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
                                     continue;
                                 }
                             }
-                            due_today.push((path, *line, &todo));
+                            undue.push((path, *line, &todo));
                         }
                     }
                 }
@@ -141,6 +142,10 @@ fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
         println!("{}", "Overdue:".bold());
         overdue.into_iter().for_each(print_todo);
     }
+    if opts.undue && !undue.is_empty() {
+        println!("{}", "Undue:".bold());
+        undue.into_iter().for_each(print_todo);
+    }
     println!("{}", "Today:".bold());
     due_today.into_iter().for_each(print_todo);
     println!("{}", "Tomorrow:".bold());
@@ -185,4 +190,7 @@ struct Cli {
     /// Whether to show week.
     #[arg(long, short, default_value_t = false)]
     week: bool,
+    /// Whether to show undue.
+    #[arg(long, short, default_value_t = true)]
+    undue: bool,
 }
