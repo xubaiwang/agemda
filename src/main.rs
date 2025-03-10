@@ -5,20 +5,22 @@ use std::{
 };
 
 use agemda::{load::load_todos_from_root, models::todo::Todo};
+use bpaf::{
+    batteries::toggle_flag, construct, long, params::NamedArg, positional, OptionParser, Parser,
+};
 use chrono::{Days, Local, NaiveDate};
-use clap::Parser;
 use colored::Colorize;
 use pathdiff::diff_paths;
 use url::Url;
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
-    let todos = load_todos_from_root(&cli.root)?;
-    show_todos(&todos, &cli);
+    let options = options().run();
+    let todos = load_todos_from_root(&options.root)?;
+    show_todos(&todos, &options);
     Ok(())
 }
 
-fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
+fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Options) {
     let show_done = opts.done;
     let show_all = opts.all;
     let show_week = opts.week;
@@ -163,34 +165,50 @@ fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Cli) {
 }
 
 /// CLI definition.
-#[derive(Debug, Clone, Parser)]
-struct Cli {
-    /// The root dir to search for markdown files
-    #[arg(
-        default_value_os_t =
-            env::current_dir().expect("Fail to get current dir")
-    )]
-    root: PathBuf,
-    /// The date of today.
-    #[arg(
-        long,
-        short,
-        default_value_t = Local::now().date_naive()
-    )]
+#[derive(Debug, Clone)]
+struct Options {
     today: NaiveDate,
-    /// Whether to show done task.
-    #[arg(long, short, default_value_t = false)]
     done: bool,
-    /// Whether to show all task that is started.
-    #[arg(long, short, default_value_t = false)]
     all: bool,
-    /// Whether start is strict.
-    #[arg(long, short, default_value_t = false)]
     strict: bool,
-    /// Whether to show week.
-    #[arg(long, short, default_value_t = false)]
     week: bool,
-    /// Whether to show undue.
-    #[arg(long, short, default_value_t = true)]
     undue: bool,
+
+    // positional
+    root: PathBuf,
+}
+
+fn toggle_switch(a: NamedArg, b: NamedArg) -> impl Parser<Option<bool>> {
+    toggle_flag(a, true, b, false)
+}
+
+fn options() -> OptionParser<Options> {
+    let today = long("today")
+        .short('t')
+        .help("the date as today")
+        .argument("TODAY")
+        .fallback(Local::now().date_naive());
+    let done = toggle_switch(long("done").short('d'), long("no-done").short('D'))
+        .map(|o| o.unwrap_or(false));
+    let all = toggle_switch(long("all").short('a'), long("no-all").short('A'))
+        .map(|o| o.unwrap_or(false));
+    let strict = toggle_switch(long("strict").short('s'), long("no-strict").short('S'))
+        .map(|o| o.unwrap_or(true));
+    let week = toggle_switch(long("week").short('w'), long("no-week").short('W'))
+        .map(|o| o.unwrap_or(false));
+    let undue = toggle_switch(long("undue").short('u'), long("no-undue").short('U'))
+        .map(|o| o.unwrap_or(false));
+    let root = positional("ROOT")
+        .help("The root dir to search for markdown files")
+        .fallback_with(|| env::current_dir());
+    construct!(Options {
+        today,
+        all,
+        done,
+        strict,
+        week,
+        undue,
+        root
+    })
+    .to_options()
 }
