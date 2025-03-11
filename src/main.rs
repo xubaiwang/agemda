@@ -1,214 +1,214 @@
-use std::{
-    collections::HashMap,
-    env,
-    path::{Path, PathBuf},
-};
+use std::{env, path::PathBuf};
 
-use agemda::{load::load_todos_from_root, models::todo::Todo};
-use bpaf::{
-    batteries::toggle_flag, construct, long, params::NamedArg, positional, OptionParser, Parser,
-};
-use chrono::{Days, Local, NaiveDate};
-use colored::Colorize;
+use agemda::load::{Loader, TodoMapGrouped};
+use bpaf::{construct, positional, OptionParser, Parser};
 use pathdiff::diff_paths;
-use url::Url;
+use ratatui::{
+    crossterm::event::{self, Event, KeyCode, KeyModifiers},
+    layout::{Constraint, Layout},
+    prelude::{Buffer, Rect},
+    style::{Style, Stylize},
+    widgets::{Block, List, ListState, StatefulWidget, Tabs, Widget},
+    DefaultTerminal,
+};
 
 fn main() -> anyhow::Result<()> {
     let options = options().run();
-    let todos = load_todos_from_root(&options.root)?;
-    show_todos(&todos, &options);
+    let app = App::new(options)?;
+
+    let mut terminal = ratatui::init();
+    app.run(&mut terminal)?;
+    ratatui::restore();
+
     Ok(())
 }
 
-fn show_todos(todo_map: &HashMap<PathBuf, Vec<(usize, Todo)>>, opts: &Options) {
-    let show_done = opts.done;
-    let show_all = opts.all;
-    let show_week = opts.week;
-    let strict_start = opts.strict;
+struct App {
+    running: bool,
+    options: Options,
+    loader: Loader,
+    map: TodoMapGrouped,
+    selected_group: usize,
+    list_state: ListState,
+}
 
-    let today = opts.today;
-    let tomorrow = today.checked_add_days(Days::new(1)).unwrap();
-    let three_days = today.checked_add_days(Days::new(2)).unwrap();
-    let week = today.checked_add_days(Days::new(7)).unwrap();
+impl App {
+    pub fn new(options: Options) -> anyhow::Result<Self> {
+        let loader = Loader::new(&options.root);
+        let map = loader.load()?;
+        Ok(Self {
+            running: true,
+            options,
+            loader,
+            selected_group: 3,
+            list_state: ListState::default(),
+            map,
+        })
+    }
 
-    let mut mal: Vec<(&Path, usize, &Todo)> = vec![];
-    let mut overdue: Vec<(&Path, usize, &Todo)> = vec![];
-    let mut undue: Vec<(&Path, usize, &Todo)> = vec![];
-    let mut due_today: Vec<(&Path, usize, &Todo)> = vec![];
-    let mut due_tomorrow: Vec<(&Path, usize, &Todo)> = vec![];
-    let mut due_overmorrow: Vec<(&Path, usize, &Todo)> = vec![];
-    let mut due_week: Vec<(&Path, usize, &Todo)> = vec![];
-    let mut due_all: Vec<(&Path, usize, &Todo)> = vec![];
+    pub fn run(mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        while self.running {
+            terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
+            self.handle_events()?;
+        }
+        Ok(())
+    }
 
-    // collect into groups
-    for (path, todos) in todo_map {
-        for (line, todo) in todos {
-            // malform
-            match &todo.agmd {
-                // parse error => mal
-                None => mal.push((path, *line, &todo)),
-
-                Some(agmd) => {
-                    if !show_done && agmd.completed.is_some() {
-                        continue;
-                    }
-                    match agmd.due {
-                        Some(due) => {
-                            if let Some(start) = agmd.start {
-                                // start > due => mal
-                                if start > due {
-                                    mal.push((path, *line, &todo));
-                                    continue;
-                                }
-                                if strict_start && start > today {
-                                    continue;
-                                }
-                            }
-                            if due < today {
-                                overdue.push((path, *line, &todo));
-                                continue;
-                            }
-                            if due == today {
-                                due_today.push((path, *line, &todo));
-                                continue;
-                            }
-                            if due <= tomorrow {
-                                due_tomorrow.push((path, *line, &todo));
-                                continue;
-                            }
-                            if due <= three_days {
-                                due_overmorrow.push((path, *line, &todo));
-                                continue;
-                            }
-                            if show_week && due <= week {
-                                due_week.push((path, *line, &todo));
-                                continue;
-                            }
-                            if show_all {
-                                due_all.push((path, *line, &todo));
-                            }
-                        }
-                        None => {
-                            if let Some(start) = agmd.start {
-                                if strict_start && start > today {
-                                    continue;
-                                }
-                            }
-                            undue.push((path, *line, &todo));
-                        }
-                    }
+    fn handle_events(&mut self) -> anyhow::Result<()> {
+        if let Event::Key(key) = event::read()? {
+            match key.code {
+                KeyCode::Char('q') => {
+                    self.running = false;
                 }
+                KeyCode::Char('r') => {
+                    // reload data
+                    self.map = self.loader.load()?;
+                }
+                KeyCode::Right => {
+                    self.next_group();
+                }
+                KeyCode::Left => {
+                    self.prev_group();
+                }
+                KeyCode::Char('1') => self.select_group(0),
+                KeyCode::Char('2') => self.select_group(1),
+                KeyCode::Char('3') => self.select_group(2),
+                KeyCode::Char('4') => self.select_group(3),
+                KeyCode::Char('5') => self.select_group(4),
+                KeyCode::Char('6') => self.select_group(5),
+                KeyCode::Char('7') => self.select_group(6),
+                KeyCode::Char('8') => self.select_group(7),
+                KeyCode::Char('9') => self.select_group(8),
+                KeyCode::Char('0') => self.select_group(9),
+
+                KeyCode::Up => self.prev_todo(),
+                KeyCode::Down => self.next_todo(),
+
+                KeyCode::Enter => {
+                    let parent = key.modifiers == KeyModifiers::SHIFT;
+                    self.open_selected(parent);
+                }
+
+                _ => {}
             }
+        }
+        Ok(())
+    }
+
+    fn reset_list(&mut self) {
+        self.list_state = ListState::default();
+    }
+
+    fn prev_todo(&mut self) {
+        match self.list_state.selected() {
+            Some(i) => self.list_state.select(Some(i.saturating_sub(1))),
+            None => self.list_state.select(Some(0)),
         }
     }
 
-    // print each group
-    let print_todo = |(path, line, todo): (&Path, usize, &Todo)| {
-        let linked_path = match Url::from_file_path(path) {
-            Ok(url) => {
-                format!(
-                    "{}{}{}",
-                    osc8::Hyperlink::new(url.as_str()),
-                    diff_paths(path, &opts.root).unwrap().display(),
-                    osc8::Hyperlink::END
-                )
-            }
-            Err(_) => format!("{}", path.display()),
-        };
-        let line = line + 1;
-        let meta = format!("@ {linked_path}#L{line}").dimmed();
+    fn next_todo(&mut self) {
+        match self.list_state.selected() {
+            Some(i) => self.list_state.select(Some(i + 1)),
+            None => self.list_state.select(Some(0)),
+        }
+    }
 
-        let summary = &todo.summary.bold();
+    fn prev_group(&mut self) {
+        if self.selected_group == 0 {
+            self.selected_group = self.map.groups().len() - 1;
+        } else {
+            self.selected_group -= 1;
+        }
+        self.reset_list();
+    }
 
-        let raw = &todo.raw;
-        let agmd_bracketed = format!("<agmd:{raw}>").bright_blue();
+    fn next_group(&mut self) {
+        let pre = self.selected_group + 1;
+        if pre >= self.map.groups().len() {
+            self.selected_group = 0;
+        } else {
+            self.selected_group = pre;
+        }
+        self.reset_list();
+    }
 
-        let done_sign = match &todo.agmd {
-            Some(agmd) => {
-                if agmd.completed.is_some() {
-                    "x".green()
-                } else {
-                    " ".yellow()
+    fn select_group(&mut self, group: usize) {
+        if group < self.map.groups().len() {
+            self.selected_group = group;
+        }
+        self.reset_list();
+    }
+
+    fn open_selected(&self, parent: bool) {
+        if let Some(selected_todo) = self.list_state.selected() {
+            let path = self.map.groups()[self.selected_group].1[selected_todo].0;
+            if parent {
+                if let Some(path) = path.parent() {
+                    _ = open::that_detached(path);
                 }
+            } else {
+                _ = open::that_detached(path);
             }
-            None => "?".red(),
-        };
-        println!("- [{done_sign}] {summary} {agmd_bracketed}  {meta}");
-    };
+        }
+    }
+}
 
-    if !mal.is_empty() {
-        println!("{}", "Malform:".bold());
-        mal.into_iter().for_each(print_todo);
+impl Widget for &mut App {
+    fn render(self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        let layout = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).split(area);
+        self.render_tabs(layout[0], buf);
+        self.render_todo_list(layout[1], buf);
     }
-    if !overdue.is_empty() {
-        println!("{}", "Overdue:".bold());
-        overdue.into_iter().for_each(print_todo);
+}
+
+impl App {
+    fn render_tabs(&self, area: Rect, buf: &mut Buffer) {
+        let tabs = Tabs::new(
+            self.map
+                .groups()
+                .iter()
+                .enumerate()
+                .map(|(i, (name, _))| format!("{} {}", i + 1, name)),
+        )
+        .block(Block::bordered().title("Groups"))
+        .highlight_style(Style::default().bold().underlined())
+        .select(self.selected_group);
+        tabs.render(area, buf);
     }
-    if opts.undue && !undue.is_empty() {
-        println!("{}", "Undue:".bold());
-        undue.into_iter().for_each(print_todo);
-    }
-    println!("{}", "Today:".bold());
-    due_today.into_iter().for_each(print_todo);
-    println!("{}", "Tomorrow:".bold());
-    due_tomorrow.into_iter().for_each(print_todo);
-    println!("{}", "Overmorrow:".bold());
-    due_overmorrow.into_iter().for_each(print_todo);
-    if show_week {
-        println!("{}", "This Week:".bold());
-        due_week.into_iter().for_each(print_todo);
-    }
-    if show_all {
-        println!("{}", "All:".bold());
-        due_all.into_iter().for_each(print_todo);
+
+    fn render_todo_list(&mut self, area: Rect, buf: &mut Buffer) {
+        let todos = &self.map.groups()[self.selected_group].1;
+
+        let list = List::new(todos.iter().map(|(path, (line, todo))| {
+            let path = diff_paths(&path, &self.options.root).unwrap();
+            format!(
+                "- [{}] {} <agmd:{}>  @ {}#L{}",
+                if todo.done() { "x" } else { " " },
+                todo.summary,
+                todo.raw,
+                path.display(),
+                line + 1
+            )
+        }))
+        .block(Block::bordered().title("Todos"))
+        .highlight_style(Style::default().reversed());
+        StatefulWidget::render(list, area, buf, &mut self.list_state);
     }
 }
 
 /// CLI definition.
 #[derive(Debug, Clone)]
 struct Options {
-    today: NaiveDate,
-    done: bool,
-    all: bool,
-    strict: bool,
-    week: bool,
-    undue: bool,
-
     // positional
     root: PathBuf,
 }
 
-fn toggle_switch(a: NamedArg, b: NamedArg) -> impl Parser<Option<bool>> {
-    toggle_flag(a, true, b, false)
-}
-
 fn options() -> OptionParser<Options> {
-    let today = long("today")
-        .short('t')
-        .help("the date as today")
-        .argument("TODAY")
-        .fallback(Local::now().date_naive());
-    let done = toggle_switch(long("done").short('d'), long("no-done").short('D'))
-        .map(|o| o.unwrap_or(false));
-    let all = toggle_switch(long("all").short('a'), long("no-all").short('A'))
-        .map(|o| o.unwrap_or(false));
-    let strict = toggle_switch(long("strict").short('s'), long("no-strict").short('S'))
-        .map(|o| o.unwrap_or(true));
-    let week = toggle_switch(long("week").short('w'), long("no-week").short('W'))
-        .map(|o| o.unwrap_or(false));
-    let undue = toggle_switch(long("undue").short('u'), long("no-undue").short('U'))
-        .map(|o| o.unwrap_or(false));
     let root = positional("ROOT")
         .help("The root dir to search for markdown files")
         .fallback_with(|| env::current_dir());
-    construct!(Options {
-        today,
-        all,
-        done,
-        strict,
-        week,
-        undue,
-        root
-    })
-    .to_options()
+    construct!(Options { root }).to_options()
 }
