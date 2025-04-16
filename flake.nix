@@ -25,8 +25,23 @@
               cargoLock = {
                 lockFile = ./Cargo.lock;
               };
+              buildInputs = [ xdg-utils ];
             };
         };
+
+        devShells.default =
+          with pkgs;
+          mkShell {
+            packages = [
+              rustfmt
+              rust-analyzer
+              clippy
+            ];
+            nativeBuildInputs = [
+              rustc
+              cargo
+            ];
+          };
       }
     );
 }

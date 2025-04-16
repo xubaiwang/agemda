@@ -1,154 +1,142 @@
-use std::{env, path::PathBuf};
+use std::sync::Arc;
 
-use agemda::load::{Loader, TodoMapGrouped};
-use bpaf::{construct, positional, OptionParser, Parser};
-use pathdiff::diff_paths;
+use agemda::{
+    cli::Cli,
+    load::{load_todos_from_root, TodoMap},
+    widgets::calendar::{has_overlap, Calendar, CalendarState},
+};
+use chrono::{Days, Local, NaiveDate};
 use ratatui::{
-    crossterm::event::{self, Event, KeyCode, KeyModifiers},
-    layout::{Constraint, Layout},
+    crossterm::event::{self, Event, KeyCode},
     prelude::{Buffer, Rect},
-    style::{Style, Stylize},
-    widgets::{Block, List, ListState, StatefulWidget, Tabs, Widget},
+    widgets::{StatefulWidget, Widget},
     DefaultTerminal,
 };
 
 fn main() -> anyhow::Result<()> {
-    let options = options().run();
-    let app = App::new(options)?;
-
+    let cli: Cli = argh::from_env();
     let mut terminal = ratatui::init();
-    app.run(&mut terminal)?;
+    App::new(cli)?.run(&mut terminal)?;
     ratatui::restore();
-
     Ok(())
 }
 
+// MARK: app
+
 struct App {
-    running: bool,
-    options: Options,
-    loader: Loader,
-    map: TodoMapGrouped,
-    selected_group: usize,
-    list_state: ListState,
+    cli: Cli,
+    should_quit: bool,
+    should_show_completed: bool,
+
+    day_width: u16,
+
+    // date related fields
+    /// The current date of real world time.
+    today: NaiveDate,
+    /// The start of date to be rendered.
+    start: NaiveDate,
+
+    state: CalendarState,
+
+    data: Arc<TodoMap>,
 }
 
 impl App {
-    pub fn new(options: Options) -> anyhow::Result<Self> {
-        let loader = Loader::new(&options.root);
-        let map = loader.load()?;
+    /// Create a new app using given cli options.
+    pub fn new(cli: Cli) -> anyhow::Result<Self> {
+        let should_quit = false;
+        let should_show_completed = false;
+
+        // TODO: make into cli option and dynamically changable
+        let day_width = 25;
+
+        let today = Local::now().date_naive();
+        let start = today.checked_sub_days(Days::new(3)).unwrap();
+
+        let state = CalendarState::new(today);
+
+        let data = Arc::new(load_todos_from_root(&cli.root)?);
+
         Ok(Self {
-            running: true,
-            options,
-            loader,
-            selected_group: 3,
-            list_state: ListState::default(),
-            map,
+            cli,
+            should_quit,
+            should_show_completed,
+            day_width,
+            today,
+            start,
+            state,
+            data,
         })
     }
 
-    pub fn run(mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        while self.running {
-            terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
-            self.handle_events()?;
-        }
-        Ok(())
-    }
+    /// Run the draw-event loop on terminal.
+    pub fn run(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+        loop {
+            // draw ui
+            terminal.draw(|frame| frame.render_widget(&mut *self, frame.area()))?;
 
-    fn handle_events(&mut self) -> anyhow::Result<()> {
-        if let Event::Key(key) = event::read()? {
-            match key.code {
-                KeyCode::Char('q') => {
-                    self.running = false;
-                }
-                KeyCode::Char('r') => {
-                    // reload data
-                    self.map = self.loader.load()?;
-                }
-                KeyCode::Right => {
-                    self.next_group();
-                }
-                KeyCode::Left => {
-                    self.prev_group();
-                }
-                KeyCode::Char('1') => self.select_group(0),
-                KeyCode::Char('2') => self.select_group(1),
-                KeyCode::Char('3') => self.select_group(2),
-                KeyCode::Char('4') => self.select_group(3),
-                KeyCode::Char('5') => self.select_group(4),
-                KeyCode::Char('6') => self.select_group(5),
-                KeyCode::Char('7') => self.select_group(6),
-                KeyCode::Char('8') => self.select_group(7),
-                KeyCode::Char('9') => self.select_group(8),
-                KeyCode::Char('0') => self.select_group(9),
+            // read and handle events
+            self.handle_event(event::read()?)?;
 
-                KeyCode::Up => self.prev_todo(),
-                KeyCode::Down => self.next_todo(),
-
-                KeyCode::Enter => {
-                    let parent = key.modifiers == KeyModifiers::SHIFT;
-                    self.open_selected(parent);
-                }
-
-                _ => {}
+            // quitting
+            if self.should_quit {
+                break;
             }
         }
         Ok(())
     }
 
-    fn reset_list(&mut self) {
-        self.list_state = ListState::default();
-    }
-
-    fn prev_todo(&mut self) {
-        match self.list_state.selected() {
-            Some(i) => self.list_state.select(Some(i.saturating_sub(1))),
-            None => self.list_state.select(Some(0)),
-        }
-    }
-
-    fn next_todo(&mut self) {
-        match self.list_state.selected() {
-            Some(i) => self.list_state.select(Some(i + 1)),
-            None => self.list_state.select(Some(0)),
-        }
-    }
-
-    fn prev_group(&mut self) {
-        if self.selected_group == 0 {
-            self.selected_group = self.map.groups().len() - 1;
-        } else {
-            self.selected_group -= 1;
-        }
-        self.reset_list();
-    }
-
-    fn next_group(&mut self) {
-        let pre = self.selected_group + 1;
-        if pre >= self.map.groups().len() {
-            self.selected_group = 0;
-        } else {
-            self.selected_group = pre;
-        }
-        self.reset_list();
-    }
-
-    fn select_group(&mut self, group: usize) {
-        if group < self.map.groups().len() {
-            self.selected_group = group;
-        }
-        self.reset_list();
-    }
-
-    fn open_selected(&self, parent: bool) {
-        if let Some(selected_todo) = self.list_state.selected() {
-            let path = self.map.groups()[self.selected_group].1[selected_todo].0;
-            if parent {
-                if let Some(path) = path.parent() {
-                    _ = open::that_detached(path);
+    /// How the app handle events.
+    ///
+    /// Currently the keybinding is hardcoded and handle only key event.
+    pub fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
+        match event {
+            // handle key only
+            Event::Key(key_event) => {
+                // handle key code only (ignoring modifiers)
+                match key_event.code {
+                    // q => quit
+                    KeyCode::Char('q') => self.should_quit = true,
+                    KeyCode::Char('r') => self.reload()?,
+                    KeyCode::Char('.') => self.toggle_show_completed(),
+                    // TODO: d for show overdue
+                    KeyCode::Enter => self.open_selected(),
+                    KeyCode::Char('k') | KeyCode::Up => self.state.select_previous_item(),
+                    KeyCode::Char('j') | KeyCode::Down => self.state.select_next_item(),
+                    KeyCode::Char('h') | KeyCode::Left => self.state.select_previous(),
+                    KeyCode::Char('l') | KeyCode::Right => self.state.select_next(),
+                    // other key code is ignored
+                    _ => {}
                 }
-            } else {
-                _ = open::that_detached(path);
             }
+            // other events than key is ignored
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Reload data
+    pub fn reload(&mut self) -> anyhow::Result<()> {
+        self.data = Arc::new(load_todos_from_root(&self.cli.root)?);
+        Ok(())
+    }
+
+    pub fn toggle_show_completed(&mut self) {
+        self.should_show_completed = !self.should_show_completed;
+    }
+
+    pub fn open_selected(&self) {
+        let mut filtered = self
+            .data
+            .iter()
+            .map(|(path, v)| v.iter().map(|item| (path.as_path(), item)))
+            .flatten()
+            .filter(|(_, (_, todo))| {
+                has_overlap(todo, self.state.selected, self.should_show_completed)
+            });
+        if let Some(selected) = filtered.nth(self.state.selected_item) {
+            let path = selected.0;
+            _ = open::that_detached(path);
         }
     }
 }
@@ -158,57 +146,13 @@ impl Widget for &mut App {
     where
         Self: Sized,
     {
-        let layout = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).split(area);
-        self.render_tabs(layout[0], buf);
-        self.render_todo_list(layout[1], buf);
+        let calendar = Calendar::new(
+            self.data.clone(),
+            self.today,
+            self.start,
+            self.day_width,
+            self.should_show_completed,
+        );
+        StatefulWidget::render(calendar, area, buf, &mut self.state);
     }
-}
-
-impl App {
-    fn render_tabs(&self, area: Rect, buf: &mut Buffer) {
-        let tabs = Tabs::new(
-            self.map
-                .groups()
-                .iter()
-                .enumerate()
-                .map(|(i, (name, _))| format!("{} {}", i + 1, name)),
-        )
-        .block(Block::bordered().title("Groups"))
-        .highlight_style(Style::default().bold().underlined())
-        .select(self.selected_group);
-        tabs.render(area, buf);
-    }
-
-    fn render_todo_list(&mut self, area: Rect, buf: &mut Buffer) {
-        let todos = &self.map.groups()[self.selected_group].1;
-
-        let list = List::new(todos.iter().map(|(path, (line, todo))| {
-            let path = diff_paths(&path, &self.options.root).unwrap();
-            format!(
-                "- [{}] {} <agmd:{}>  @ {}#L{}",
-                if todo.done() { "x" } else { " " },
-                todo.summary,
-                todo.raw,
-                path.display(),
-                line + 1
-            )
-        }))
-        .block(Block::bordered().title("Todos"))
-        .highlight_style(Style::default().reversed());
-        StatefulWidget::render(list, area, buf, &mut self.list_state);
-    }
-}
-
-/// CLI definition.
-#[derive(Debug, Clone)]
-struct Options {
-    // positional
-    root: PathBuf,
-}
-
-fn options() -> OptionParser<Options> {
-    let root = positional("ROOT")
-        .help("The root dir to search for markdown files")
-        .fallback_with(|| env::current_dir());
-    construct!(Options { root }).to_options()
 }
