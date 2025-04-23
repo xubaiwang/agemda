@@ -105,6 +105,8 @@ impl App {
                     KeyCode::Char('j') | KeyCode::Down => self.state.select_next_item(),
                     KeyCode::Char('h') | KeyCode::Left => self.state.select_previous(),
                     KeyCode::Char('l') | KeyCode::Right => self.state.select_next(),
+                    KeyCode::Char('[') => self.select_previous_start(),
+                    KeyCode::Char(']') => self.select_next_start(),
                     // other key code is ignored
                     _ => {}
                 }
@@ -138,6 +140,14 @@ impl App {
             let path = selected.0;
             _ = open::that_detached(path);
         }
+    }
+
+    pub fn select_previous_start(&mut self) {
+        self.start = self.start.checked_sub_days(Days::new(1)).unwrap();
+    }
+
+    pub fn select_next_start(&mut self) {
+        self.start = self.start.checked_add_days(Days::new(1)).unwrap();
     }
 }
 
