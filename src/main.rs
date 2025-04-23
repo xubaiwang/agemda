@@ -120,6 +120,7 @@ impl App {
     /// Reload data
     pub fn reload(&mut self) -> anyhow::Result<()> {
         self.data = Arc::new(load_todos_from_root(&self.cli.root)?);
+        self.today = Local::now().date_naive();
         Ok(())
     }
 
