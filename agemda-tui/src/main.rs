@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use agemda::{
-    cli::Cli,
-    widgets::calendar::{has_overlap, Calendar, CalendarState},
-};
+use agemda::cli::Cli;
 use agemda_core::Todo;
 use agemda_io::load::load_todos_from_root;
 use chrono::{Days, Local, NaiveDate};
@@ -13,6 +10,7 @@ use ratatui::{
     widgets::{StatefulWidget, Widget},
     DefaultTerminal,
 };
+use ratatui_lincal::{calendar::Calendar, data::CalendarState, utils::has_overlap};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli: Cli = argh::from_env();

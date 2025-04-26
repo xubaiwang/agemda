@@ -1,47 +1,15 @@
-use std::sync::Arc;
-
-use agemda_core::Todo;
 use chrono::{Datelike, Days, NaiveDate};
 use ratatui::{
-    prelude::{Buffer, Rect},
+    buffer::Buffer,
+    layout::Rect,
     style::{Style, Stylize},
     widgets::StatefulWidget,
 };
 
-pub type CalendarData = Arc<Vec<Todo>>;
-
-/// Calendar state, use by both `Calendar` and `CalendarRow`.
-pub struct CalendarState {
-    pub selected: NaiveDate,
-    pub selected_item: usize,
-}
-
-impl CalendarState {
-    pub fn new(selected: NaiveDate) -> Self {
-        Self {
-            selected,
-            selected_item: 0,
-        }
-    }
-
-    pub fn select_next(&mut self) {
-        self.selected = self.selected.checked_add_days(Days::new(1)).unwrap();
-        self.selected_item = 0;
-    }
-
-    pub fn select_previous(&mut self) {
-        self.selected = self.selected.checked_sub_days(Days::new(1)).unwrap();
-        self.selected_item = 0;
-    }
-
-    pub fn select_next_item(&mut self) {
-        self.selected_item += 1;
-    }
-
-    pub fn select_previous_item(&mut self) {
-        self.selected_item = self.selected_item.saturating_sub(1);
-    }
-}
+use crate::{
+    data::{CalendarData, CalendarState},
+    utils::{has_overlap, set_string_opt},
+};
 
 /// Calendar row widget.
 pub struct CalendarRow {
@@ -186,136 +154,5 @@ impl StatefulWidget for CalendarRow {
         let last_tick_x = indented_x + day_count * self.day_width;
         set_string_opt(buf, last_tick_x, y_axis, "┬", default_style);
         set_string_opt(buf, last_tick_x, y_label, ">", default_style);
-    }
-}
-
-/// Calendar widget.
-pub struct Calendar {
-    data: CalendarData,
-    start: NaiveDate,
-    today: NaiveDate,
-    day_width: u16,
-    should_show_completed: bool,
-}
-
-impl Calendar {
-    pub fn new(
-        data: CalendarData,
-        today: NaiveDate,
-        start: NaiveDate,
-        day_width: u16,
-        should_show_completed: bool,
-    ) -> Self {
-        Self {
-            data,
-            today,
-            start,
-            day_width,
-            should_show_completed,
-        }
-    }
-}
-
-impl StatefulWidget for Calendar {
-    type State = CalendarState;
-
-    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        // accumulate height for comparing with area height
-        let mut acc_height = 0;
-
-        // number of days per row
-        let days_count = area.width / self.day_width;
-
-        // start argument of row
-        let mut row_start = self.start;
-
-        loop {
-            // cease when height overflow
-            if acc_height >= area.height {
-                break;
-            }
-
-            // calculate height of this row
-            let row_height = (0..days_count)
-            .map(|day_index| {
-                // the corresponding date
-                let date = row_start
-                    .checked_add_days(Days::new(day_index as u64))
-                    .unwrap();
-                // TODO: duplicate filtering shoud be cached and passed
-                let filtered = self.data.iter().filter(|todo| has_overlap(todo, date, self.should_show_completed));
-                filtered.count()
-            })
-            .max()
-            .unwrap_or(0)
-            // axis, label, empty, so three
-            + 3;
-
-            // create subarea for row
-            let row_area = Rect {
-                y: area.y + acc_height,
-                height: row_height as u16,
-                ..area
-            };
-            CalendarRow::new(
-                self.data.clone(),
-                self.today,
-                row_start,
-                self.day_width,
-                self.should_show_completed,
-            )
-            .render(row_area, buf, state);
-
-            // accumulate height and row_start
-            acc_height += row_height as u16;
-            row_start = row_start
-                .checked_add_days(Days::new(days_count as u64))
-                .unwrap();
-        }
-    }
-}
-
-/// Utility function for filtering todo out of day.
-pub fn has_overlap(todo: &Todo, date: NaiveDate, should_show_completed: bool) -> bool {
-    if let Ok(agmd) = &todo.attributes {
-        // match (agmd.start, agmd.due) {
-        //     // TODO: both none for ad-hoc for every day
-        //     // (None, None) => true,
-        //     // due only
-        //     // TODO: handle overdue
-        //     // (None, Some(due)) => date <= due,
-        //     // start only
-        //     // (Some(start), None) => start <= date,
-        //     // both
-        //     // (Some(start), Some(due)) => date <= due && start <= date,
-
-        //     _ => false,
-        // }
-        // TODO: too many, only due currently
-        let is_due = if let Some(due) = agmd.due {
-            due.date_naive() == date
-        } else {
-            false
-        };
-        if should_show_completed {
-            is_due
-        } else {
-            is_due && agmd.completed.is_none()
-        }
-    } else {
-        // TODO: handle malform
-        false
-    }
-}
-
-pub fn set_string_opt(
-    buf: &mut Buffer,
-    x: u16,
-    y: u16,
-    string: impl AsRef<str>,
-    style: impl Into<Style>,
-) {
-    if y >= buf.area().top() && y < buf.area.bottom() {
-        buf.set_string(x, y, string, style);
     }
 }

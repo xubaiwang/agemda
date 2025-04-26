@@ -9,6 +9,12 @@ pub struct Attributes {
     pub completed: Option<DateTime<Local>>,
 }
 
+impl Attributes {
+    pub fn is_completed(&self) -> bool {
+        self.completed.is_some()
+    }
+}
+
 pub struct Metadata {
     pub path: PathBuf,
 }
