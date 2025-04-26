@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agemda_core::Todo;
 use chrono::{Datelike, Days, NaiveDate};
 use ratatui::{
     prelude::{Buffer, Rect},
@@ -7,9 +8,7 @@ use ratatui::{
     widgets::StatefulWidget,
 };
 
-use crate::{load::TodoMap, models::todo::Todo};
-
-pub type CalendarData = Arc<TodoMap>;
+pub type CalendarData = Arc<Vec<Todo>>;
 
 /// Calendar state, use by both `Calendar` and `CalendarRow`.
 pub struct CalendarState {
@@ -107,9 +106,8 @@ impl StatefulWidget for CalendarRow {
             // filter out data of this date
             let filtered: Vec<_> = self
                 .data
-                .values()
-                .flatten()
-                .filter(|(_, todo)| has_overlap(todo, date, self.should_show_completed))
+                .iter()
+                .filter(|todo| has_overlap(todo, date, self.should_show_completed))
                 .collect();
 
             // TODO: fix selection out of range
@@ -145,14 +143,14 @@ impl StatefulWidget for CalendarRow {
             );
 
             // render each todo item
-            for (item_index, (_, item)) in filtered.iter().enumerate() {
+            for (item_index, item) in filtered.iter().enumerate() {
                 // the first y is kept empty for visual separation, so plus 1
                 let y = area.y + 1 + item_index as u16;
 
                 let is_selected_item = is_selected_date && state.selected_item == item_index;
 
                 // TODO: padding and trim
-                let style = if let Some(agmd) = &item.agmd {
+                let style = if let Ok(agmd) = &item.attributes {
                     if agmd.completed.is_some() {
                         default_style.dim()
                     } else {
@@ -245,7 +243,7 @@ impl StatefulWidget for Calendar {
                     .checked_add_days(Days::new(day_index as u64))
                     .unwrap();
                 // TODO: duplicate filtering shoud be cached and passed
-                let filtered = self.data.values().flatten().filter(|(_, todo)| has_overlap(todo, date, self.should_show_completed));
+                let filtered = self.data.iter().filter(|todo| has_overlap(todo, date, self.should_show_completed));
                 filtered.count()
             })
             .max()
@@ -279,7 +277,7 @@ impl StatefulWidget for Calendar {
 
 /// Utility function for filtering todo out of day.
 pub fn has_overlap(todo: &Todo, date: NaiveDate, should_show_completed: bool) -> bool {
-    if let Some(agmd) = &todo.agmd {
+    if let Ok(agmd) = &todo.attributes {
         // match (agmd.start, agmd.due) {
         //     // TODO: both none for ad-hoc for every day
         //     // (None, None) => true,
@@ -294,7 +292,11 @@ pub fn has_overlap(todo: &Todo, date: NaiveDate, should_show_completed: bool) ->
         //     _ => false,
         // }
         // TODO: too many, only due currently
-        let is_due = agmd.due == Some(date);
+        let is_due = if let Some(due) = agmd.due {
+            due.date_naive() == date
+        } else {
+            false
+        };
         if should_show_completed {
             is_due
         } else {

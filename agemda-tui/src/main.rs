@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use agemda::{
     cli::Cli,
-    load::{load_todos_from_root, TodoMap},
     widgets::calendar::{has_overlap, Calendar, CalendarState},
 };
+use agemda_core::Todo;
+use agemda_io::load::load_todos_from_root;
 use chrono::{Days, Local, NaiveDate};
 use ratatui::{
     crossterm::event::{self, Event, KeyCode},
@@ -13,7 +14,7 @@ use ratatui::{
     DefaultTerminal,
 };
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli: Cli = argh::from_env();
     let mut terminal = ratatui::init();
     App::new(cli)?.run(&mut terminal)?;
@@ -38,12 +39,12 @@ struct App {
 
     state: CalendarState,
 
-    data: Arc<TodoMap>,
+    data: Arc<Vec<Todo>>,
 }
 
 impl App {
     /// Create a new app using given cli options.
-    pub fn new(cli: Cli) -> anyhow::Result<Self> {
+    pub fn new(cli: Cli) -> Result<Self, Box<dyn std::error::Error>> {
         let should_quit = false;
         let should_show_completed = false;
 
@@ -70,7 +71,10 @@ impl App {
     }
 
     /// Run the draw-event loop on terminal.
-    pub fn run(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    pub fn run(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         loop {
             // draw ui
             terminal.draw(|frame| frame.render_widget(&mut *self, frame.area()))?;
@@ -89,7 +93,7 @@ impl App {
     /// How the app handle events.
     ///
     /// Currently the keybinding is hardcoded and handle only key event.
-    pub fn handle_event(&mut self, event: Event) -> anyhow::Result<()> {
+    pub fn handle_event(&mut self, event: Event) -> Result<(), Box<dyn std::error::Error>> {
         match event {
             // handle key only
             Event::Key(key_event) => {
@@ -118,7 +122,7 @@ impl App {
     }
 
     /// Reload data
-    pub fn reload(&mut self) -> anyhow::Result<()> {
+    pub fn reload(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.data = Arc::new(load_todos_from_root(&self.cli.root)?);
         self.today = Local::now().date_naive();
         Ok(())
@@ -132,13 +136,9 @@ impl App {
         let mut filtered = self
             .data
             .iter()
-            .map(|(path, v)| v.iter().map(|item| (path.as_path(), item)))
-            .flatten()
-            .filter(|(_, (_, todo))| {
-                has_overlap(todo, self.state.selected, self.should_show_completed)
-            });
+            .filter(|todo| has_overlap(todo, self.state.selected, self.should_show_completed));
         if let Some(selected) = filtered.nth(self.state.selected_item) {
-            let path = selected.0;
+            let path = selected.metadata.path.as_path();
             _ = open::that_detached(path);
         }
     }

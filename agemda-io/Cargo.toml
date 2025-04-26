@@ -1,0 +1,12 @@
+[package]
+name = "agemda-io"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+agemda-core = { version = "0.1.0", path = "../agemda-core" }
+chrono = "0.4.40"
+ignore = "0.4.23"
+nom = "8.0.0"
+pulldown-cmark = "0.13.0"
+
