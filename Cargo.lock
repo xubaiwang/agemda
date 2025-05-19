@@ -37,6 +37,7 @@ name = "agemda-io"
 version = "0.1.0"
 dependencies = [
  "agemda-core",
+ "anyhow",
  "chrono",
  "ignore",
  "nom 8.0.0",

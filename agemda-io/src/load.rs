@@ -31,9 +31,7 @@ pub fn walk_markdown_files(
     })
 }
 
-pub fn load_todos_from_root(
-    root: impl AsRef<Path>,
-) -> Result<Vec<Todo>, Box<dyn std::error::Error>> {
+pub fn load_todos_from_root(root: impl AsRef<Path>) -> anyhow::Result<Vec<Todo>> {
     let root = root.as_ref();
     let mut todos = vec![];
 

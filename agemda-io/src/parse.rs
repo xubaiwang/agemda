@@ -1,9 +1,10 @@
 use std::{
-    fs, io,
+    fs,
     path::{Path, PathBuf},
 };
 
 use agemda_core::{Attributes, Metadata, Todo};
+use anyhow::Context;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use crate::{
@@ -11,9 +12,10 @@ use crate::{
     link::link,
 };
 
-pub fn parse_file(acc: &mut Vec<Todo>, path: impl AsRef<Path>) -> io::Result<()> {
+pub fn parse_file(acc: &mut Vec<Todo>, path: impl AsRef<Path>) -> anyhow::Result<()> {
     let path = path.as_ref();
-    let text = fs::read_to_string(path)?;
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("fail to read path {}", path.display()))?;
 
     // create parser
     let mut options = Options::empty();
